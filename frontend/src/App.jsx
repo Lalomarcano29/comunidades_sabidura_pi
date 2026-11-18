@@ -1,11 +1,25 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import { useState } from "react";
+import heroImg from "./assets/hero.png";
+import reactLogo from "./assets/react.svg";
+import viteLogo from "./assets/vite.svg";
+import "./App.css";
 
 function App() {
-  const [count, setCount] = useState(0)
+  const [count, setCount] = useState(0);
+  const [correo, setCorreo] = useState("");
+  const [contrasena, setContrasena] = useState("");
+  const [mensaje, setMensaje] = useState("");
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+
+    if (correo.trim() === "" || contrasena === "") {
+      alert("Debes completar el correo y la contraseña");
+      return;
+    }
+
+    alert("Formulario completado correctamente");
+  };
 
   return (
     <>
@@ -16,7 +30,32 @@ function App() {
           <img src={viteLogo} className="vite" alt="Vite logo" />
         </div>
         <div>
-          <h1>Get started</h1>
+          <h1>Comunidades de Sabiduría</h1>
+          <form onSubmit={handleSubmit}>
+            <div>
+              <label htmlFor="correo">Correo electrónico:</label>
+
+              <input
+                id="correo"
+                type="email"
+                placeholder="Ingresa tu correo"
+                value={correo}
+                onChange={(e) => setCorreo(e.target.value)}
+              />
+            </div>
+            <div>
+              <label htmlFor="contrasena">Contraseña:</label>
+
+              <input
+                id="contrasena"
+                type="password"
+                placeholder="Ingresa tu contraseña"
+                value={contrasena}
+                onChange={(e) => setContrasena(e.target.value)}
+              />
+            </div>
+            <button type="button">Iniciar sesión</button>
+          </form>
           <p>
             Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
           </p>
@@ -116,7 +155,7 @@ function App() {
       <div className="ticks"></div>
       <section id="spacer"></section>
     </>
-  )
+  );
 }
 
-export default App
+export default App;
