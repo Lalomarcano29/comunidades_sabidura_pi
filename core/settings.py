@@ -10,42 +10,37 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
-import os
 from pathlib import Path
 import cloudinary
-import cloudinary.uploader
-import cloudinary.api
-from dotenv import load_dotenv
-import django_mongodb_backend
-from django.conf import global_settings
+import environ
 
-# Carga credenciales del archivo .env
-load_dotenv()
-
-# Genera _id nativos de MongoDB
-global_settings.DEFAULT_AUTO_FIELD = "django_mongodb_backend.fields.ObjectIdAutoField"
+# Claves primarias nativas de MongoDB (ObjectId)
+DEFAULT_AUTO_FIELD = "django_mongodb_backend.fields.ObjectIdAutoField"
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Activación de django-environ
+env = environ.Env(
+    DJANGO_DEBUG=(bool, False),
+    DJANGO_ALLOWED_HOSTS=(list, ["127.0.0.1", "localhost"]),
+    CORS_ALLOWED_ORIGINS=(list, ["http://localhost:5173", "http://127.0.0.1:5173"]),
+)
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
+# Lee el archivo .env si existe en la raíz
+environ.Env.read_env(BASE_DIR / ".env")
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY")
-
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
-
-ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
-
+# Seguridad básica
+SECRET_KEY = env("DJANGO_SECRET_KEY")
+DEBUG = env("DJANGO_DEBUG")
+ALLOWED_HOSTS = env("DJANGO_ALLOWED_HOSTS")
 
 # Application definition
 
 INSTALLED_APPS = [
     # Adaptador MongoDB
     'django_mongodb_backend',
+    'core.apps.MongoContentTypesConfig',
     'django.contrib.staticfiles',
     # Aplicaciónes extras de Django
     'rest_framework',
@@ -53,6 +48,10 @@ INSTALLED_APPS = [
     # Aplicación
     'usuarios',
 ]
+
+MIGRATION_MODULES = {
+    "contenttypes": "mongo_migrations.contenttypes",
+}
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
@@ -80,24 +79,14 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'core.wsgi.application'
 
-
-# Database
-# https://docs.djangoproject.com/en/6.1/ref/settings/#databases
-
+# Conexión MongoDB Atlas
 DATABASES = {
     'default': {
         "ENGINE": "django_mongodb_backend",
-        "HOST": os.getenv("MONGODB_URI"),
-        "NAME": os.getenv("MONGODB_NAME", "comunidades_db"),
+        "HOST": env("MONGODB_URI"),
+        "NAME": env("MONGODB_NAME", default="comunidades_db"),
     }
 }
-
-
-# Password validation
-# https://docs.djangoproject.com/en/6.1/ref/settings/#auth-password-validators
-
-# Internationalization
-# https://docs.djangoproject.com/en/6.1/topics/i18n/
 
 LANGUAGE_CODE = 'es-cl'
 
@@ -117,33 +106,44 @@ STATIC_URL = 'static/'
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
 
-MAILERS = {
-    'default': {
-        'BACKEND': 'django.core.mail.backends.console.EmailBackend',
-    },
-}
+EMAIL_BACKEND = env("DJANGO_EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend")
 
 REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "usuarios.authentication.FirebaseAuthentication",
+    ],
     "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.AllowAny",
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+    "UNAUTHENTICATED_USER": None,
+    "DEFAULT_RENDERER_CLASSES": [
+        "rest_framework.renderers.JSONRenderer",
     ],
 }
 
 # Comunicación entre Django y React
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
-CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOWED_ORIGINS = env("CORS_ALLOWED_ORIGINS")
+
+# Conexión backend con Firebase para Auth + Firestore
+FIREBASE_PROJECT_ID = env("FIREBASE_PROJECT_ID", default="")
+_firebase_creds_raw = env("FIREBASE_CREDENTIALS_FILE", default="").strip()
+if _firebase_creds_raw:
+    _firebase_creds_path = Path(_firebase_creds_raw)
+    FIREBASE_CREDENTIALS_FILE = str(
+        _firebase_creds_path
+        if _firebase_creds_path.is_absolute()
+        else (BASE_DIR / _firebase_creds_path)
+    )
+else:
+    FIREBASE_CREDENTIALS_FILE = ""
+
+FIREBASE_AUTH_CLOCK_SKEW_SECONDS = env.int("FIREBASE_AUTH_CLOCK_SKEW_SECONDS", default=10)
+FIREBASE_AUTH_CHECK_REVOKED = env.bool("FIREBASE_AUTH_CHECK_REVOKED", default=False)
 
 # Inicializa Cloudinary
 cloudinary.config(
-    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
-    api_key=os.getenv("CLOUDINARY_API_KEY"),
-    api_secret=os.getenv("CLOUDINARY_API_SECRET"),
+    cloud_name=env("CLOUDINARY_CLOUD_NAME"),
+    api_key=env("CLOUDINARY_API_KEY"),
+    api_secret=env("CLOUDINARY_API_SECRET"),
     secure=True
 )
-
-# ARCHIVOS MULTIMEDIA LOCALES
-MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'

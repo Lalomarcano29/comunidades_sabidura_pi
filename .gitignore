@@ -1,4 +1,4 @@
-# Entornos virtuales de Python
+﻿# Entornos virtuales de Python
 venv/
 env/
 __pycache__/
@@ -25,3 +25,7 @@ coverage/
 #Archivos de Sistema Operativo
 .DS_Store
 Thumbs.db
+
+#Archivo firebase
+
+comunidades-sabiduria-firebase-adminsdk-fbsvc-9cf00656da.json
