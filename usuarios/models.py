@@ -11,7 +11,6 @@ from django_mongodb_backend.fields import (
     ObjectIdField,
 )
 from django_mongodb_backend.models import EmbeddedModel
-from django_mongodb_backend.constraints import EmbeddedFieldUniqueConstraint
 from django_mongodb_backend.indexes import EmbeddedFieldIndex
 from .validators import (
     calcular_edad,
@@ -26,16 +25,23 @@ from .validators import (
 
 TIPO_CUENTA_CHOICES = [
     ("persona", "Persona natural"),
-    ("entidad", "Entidad / empresa"),
+    ("empresa", "Empresa"),
+    ("institucion", "Institución"),
 ]
+
+
+def _excluir_campos_nulos(instancia, campos_opcionales, exclude=None):
+    excluidos = list(exclude) if exclude else []
+    for campo in campos_opcionales:
+        if getattr(instancia, campo, None) is None and campo not in excluidos:
+            excluidos.append(campo)
+    return excluidos
 
 
 # SUBDOCUMENTOS EMBEBIDOS
 
-# --- Transversales ---
 class Imagen(EmbeddedModel):
     """Imagen pública en Cloudinary (foto de perfil, portada)."""
-
     public_id = models.CharField(max_length=255)
     subido_en = models.DateTimeField(default=timezone.now)
 
@@ -46,7 +52,6 @@ class Imagen(EmbeddedModel):
 
 class DocumentoPrivado(EmbeddedModel):
     """Documento sensible en Cloudinary (type='authenticated'). Solo admins."""
-
     class TipoRecurso(models.TextChoices):
         IMAGEN = "image", "Imagen"
         ARCHIVO = "raw", "Archivo (PDF, etc.)"
@@ -60,21 +65,16 @@ class DocumentoPrivado(EmbeddedModel):
 
 
 class TaxonomiaRef(EmbeddedModel):
-    """Referencia a una taxonomía con su nombre copiado (snapshot)."""
-
     taxonomia_id = ObjectIdField()
     nombre = models.CharField(max_length=100)
 
 
 class Auditoria(EmbeddedModel):
-    """Trazabilidad estándar de creación y modificación de registros."""
-
-    creado_por = ObjectIdField(null=True, blank=True)
+    creado_por = ObjectIdField(null=True, blank=True, default=None)
     creado_el = models.DateTimeField(default=timezone.now)
     actualizado_el = models.DateTimeField(default=timezone.now)
 
 
-# --- De Usuario ---
 class DatosPersona(EmbeddedModel):
     nombres = models.CharField(max_length=100, validators=[validar_nombre_persona])
     apellidos = models.CharField(max_length=100, validators=[validar_nombre_persona])
@@ -85,13 +85,54 @@ class DatosPersona(EmbeddedModel):
 class DatosEntidad(EmbeddedModel):
     razon_social = models.CharField(max_length=200, validators=[validar_nombre_mostrar])
     fecha_creacion = models.DateField()
+    certificado_vigencia = EmbeddedModelField(DocumentoPrivado, null=True, blank=True, default=None)
+    documento_representacion = EmbeddedModelField(DocumentoPrivado, null=True, blank=True, default=None)
+    otros_antecedentes = EmbeddedModelField(DocumentoPrivado, null=True, blank=True, default=None)
+
+    def full_clean(self, exclude=None, validate_unique=True, validate_constraints=True):
+        try:
+            super().full_clean(
+                exclude=exclude,
+                validate_unique=validate_unique,
+                validate_constraints=validate_constraints,
+            )
+        except ValidationError as exc:
+            if not hasattr(exc, "error_dict"):
+                raise
+            opcionales = ("certificado_vigencia", "documento_representacion", "otros_antecedentes")
+            errores_reales = {
+                campo: msgs
+                for campo, msgs in exc.error_dict.items()
+                if not (campo in opcionales and getattr(self, campo, None) is None)
+            }
+            if errores_reales:
+                raise ValidationError(errores_reales)
 
 
 class DocumentosVerificacion(EmbeddedModel):
-    erut = EmbeddedModelField(DocumentoPrivado, null=True, blank=True)
-    representacion_legal = EmbeddedModelField(DocumentoPrivado, null=True, blank=True)
-    cedula_anverso = EmbeddedModelField(DocumentoPrivado, null=True, blank=True)
-    cedula_reverso = EmbeddedModelField(DocumentoPrivado, null=True, blank=True)
+    erut = EmbeddedModelField(DocumentoPrivado, null=True, blank=True, default=None)
+    representacion_legal = EmbeddedModelField(DocumentoPrivado, null=True, blank=True, default=None)
+    cedula_anverso = EmbeddedModelField(DocumentoPrivado, null=True, blank=True, default=None)
+    cedula_reverso = EmbeddedModelField(DocumentoPrivado, null=True, blank=True, default=None)
+
+    def full_clean(self, exclude=None, validate_unique=True, validate_constraints=True):
+        try:
+            super().full_clean(
+                exclude=exclude,
+                validate_unique=validate_unique,
+                validate_constraints=validate_constraints,
+            )
+        except ValidationError as exc:
+            if not hasattr(exc, "error_dict"):
+                raise
+            opcionales = ("erut", "representacion_legal", "cedula_anverso", "cedula_reverso")
+            errores_reales = {
+                campo: msgs
+                for campo, msgs in exc.error_dict.items()
+                if not (campo in opcionales and getattr(self, campo, None) is None)
+            }
+            if errores_reales:
+                raise ValidationError(errores_reales)
 
 
 class RevisionAdmin(EmbeddedModel):
@@ -101,8 +142,6 @@ class RevisionAdmin(EmbeddedModel):
 
 
 class VerificacionPublicador(EmbeddedModel):
-    """Solo existe cuando un cliente solicita poder organizar actividades."""
-
     class Estado(models.TextChoices):
         PENDIENTE = "pendiente", "Pendiente"
         APROBADA = "aprobada", "Aprobada"
@@ -111,15 +150,32 @@ class VerificacionPublicador(EmbeddedModel):
     estado = models.CharField(max_length=10, choices=Estado.choices, default=Estado.PENDIENTE)
     rut = models.CharField(max_length=12, null=True, blank=True)
     documentos = EmbeddedModelField(DocumentosVerificacion)
-    revision_admin = EmbeddedModelField(RevisionAdmin, null=True, blank=True)
+    revision_admin = EmbeddedModelField(RevisionAdmin, null=True, blank=True, default=None)
     fecha_solicitud = models.DateTimeField(default=timezone.now)
 
+    def full_clean(self, exclude=None, validate_unique=True, validate_constraints=True):
+        try:
+            super().full_clean(
+                exclude=exclude,
+                validate_unique=validate_unique,
+                validate_constraints=validate_constraints,
+            )
+        except ValidationError as exc:
+            if not hasattr(exc, "error_dict"):
+                raise
+            errores_reales = {
+                campo: msgs
+                for campo, msgs in exc.error_dict.items()
+                if not (campo == "revision_admin" and getattr(self, "revision_admin", None) is None)
+            }
+            if errores_reales:
+                raise ValidationError(errores_reales)
 
-# --- De Actividad ---
+
 class Creador(EmbeddedModel):
     usuario_id = ObjectIdField()
     nombre_mostrar = models.CharField(max_length=100)
-    tipo_cuenta = models.CharField(max_length=10, choices=TIPO_CUENTA_CHOICES)
+    tipo_cuenta = models.CharField(max_length=15, choices=TIPO_CUENTA_CHOICES)
 
 
 class Clasificacion(EmbeddedModel):
@@ -148,8 +204,6 @@ class Costo(EmbeddedModel):
 
 
 class PuntoGeoJSON(EmbeddedModel):
-    """GeoJSON Point. El orden de coordinates es [longitud, latitud]."""
-
     type = models.CharField(max_length=5, default="Point", editable=False)
     coordinates = ArrayField(models.FloatField(), size=2)
 
@@ -166,7 +220,12 @@ class Moderacion(EmbeddedModel):
     fecha_bloqueo = models.DateTimeField(default=timezone.now)
 
 
-# --- De Inscripción ---
+class RequerimientosAccesibilidad(EmbeddedModel):
+    acompanamiento = models.BooleanField(default=False)
+    materiales_adaptados = models.BooleanField(default=False)
+    otro = models.CharField(max_length=200, blank=True)
+
+
 class ActividadResumen(EmbeddedModel):
     titulo = models.CharField(max_length=150)
     fecha_inicio = models.DateTimeField()
@@ -185,7 +244,6 @@ class AuditoriaInscripcion(EmbeddedModel):
     dispositivo = models.CharField(max_length=255, blank=True)
 
 
-# --- De Reporte ---
 class Reportante(EmbeddedModel):
     usuario_id = ObjectIdField()
     nombre_mostrar = models.CharField(max_length=100)
@@ -199,7 +257,7 @@ class ObjetivoReporte(EmbeddedModel):
 
     tipo = models.CharField(max_length=15, choices=Tipo.choices)
     elemento_id = models.CharField(max_length=128)
-    actividad_id = ObjectIdField(null=True, blank=True)
+    actividad_id = ObjectIdField(null=True, blank=True, default=None)
     snapshot_contenido = models.TextField(blank=True)
 
 
@@ -218,7 +276,6 @@ class ResolucionAdmin(EmbeddedModel):
 
 # 2. COLECCIONES PRINCIPALES
 
-# --- Taxonomia ---
 class Taxonomia(models.Model):
     class Tipo(models.TextChoices):
         CATEGORIA = "categoria", "Categoría de actividad"
@@ -264,15 +321,12 @@ class Taxonomia(models.Model):
 
         super().save(*args, **kwargs)
 
-    def __str__(self):
-        return f"{self.get_tipo_display()}: {self.nombre}"
 
-
-# --- Usuario ---
 class Usuario(models.Model):
     class TipoCuenta(models.TextChoices):
         PERSONA = "persona", "Persona natural"
-        ENTIDAD = "entidad", "Entidad / empresa"
+        EMPRESA = "empresa", "Empresa"
+        INSTITUCION = "institucion", "Institución"
 
     class Rol(models.TextChoices):
         CLIENTE = "cliente", "Cliente"
@@ -281,19 +335,16 @@ class Usuario(models.Model):
 
     firebase_uid = models.CharField(max_length=128, unique=True)
     correo = models.EmailField(unique=True)
-    tipo_cuenta = models.CharField(max_length=10, choices=TipoCuenta.choices)
+    tipo_cuenta = models.CharField(max_length=15, choices=TipoCuenta.choices)
     rol = models.CharField(max_length=12, choices=Rol.choices, default=Rol.CLIENTE)
     nombre_mostrar = models.CharField(max_length=100, validators=[validar_nombre_mostrar])
     biografia = models.TextField(blank=True)
     telefono = models.CharField(max_length=20, blank=True, validators=[validar_telefono_cl])
-    foto_perfil = EmbeddedModelField(Imagen, null=True, blank=True)
 
-    datos_persona = EmbeddedModelField(DatosPersona, null=True, blank=True)
-    datos_entidad = EmbeddedModelField(DatosEntidad, null=True, blank=True)
-
-    verificacion_publicador = EmbeddedModelField(
-        VerificacionPublicador, null=True, blank=True
-    )
+    foto_perfil = EmbeddedModelField(Imagen, null=True, blank=True, default=None)
+    datos_persona = EmbeddedModelField(DatosPersona, null=True, blank=True, default=None)
+    datos_entidad = EmbeddedModelField(DatosEntidad, null=True, blank=True, default=None)
+    verificacion_publicador = EmbeddedModelField(VerificacionPublicador, null=True, blank=True, default=None)
 
     actividades_favoritas = ArrayField(ObjectIdField(), default=list, blank=True)
     is_active = models.BooleanField(default=True)
@@ -301,7 +352,6 @@ class Usuario(models.Model):
 
     class Meta:
         db_table = "usuarios"
-        constraints = []
         indexes = [
             models.Index(fields=["rol", "is_active"], name="idx_usr_rol_activo"),
             EmbeddedFieldIndex(
@@ -342,13 +392,13 @@ class Usuario(models.Model):
             if self.datos_entidad:
                 errores["datos_entidad"] = "No corresponde a una persona natural."
 
-        elif self.tipo_cuenta == self.TipoCuenta.ENTIDAD:
+        elif self.tipo_cuenta in (self.TipoCuenta.EMPRESA, self.TipoCuenta.INSTITUCION):
             if not self.datos_entidad:
-                errores["datos_entidad"] = "Requerido para entidades."
+                errores["datos_entidad"] = "Requerido para organizaciones."
             elif self.datos_entidad.fecha_creacion > date.today():
                 errores["datos_entidad"] = "La fecha de creación no puede ser futura."
             if self.datos_persona:
-                errores["datos_persona"] = "No corresponde a una entidad."
+                errores["datos_persona"] = "No corresponde a una organización."
 
         verificacion = self.verificacion_publicador
         if verificacion:
@@ -392,15 +442,10 @@ class Usuario(models.Model):
             )
 
         if campos is None:
-            self.full_clean()
-
+            self.clean()
         super().save(*args, **kwargs)
 
-    def __str__(self):
-        return f"{self.nombre_mostrar} <{self.correo}>"
 
-
-# --- Actividad ---
 class Actividad(models.Model):
     class Modalidad(models.TextChoices):
         PRESENCIAL = "presencial", "Presencial"
@@ -417,36 +462,24 @@ class Actividad(models.Model):
     titulo = models.CharField(max_length=150)
     descripcion = models.TextField()
     modalidad = models.CharField(max_length=12, choices=Modalidad.choices)
-    imagen_portada = EmbeddedModelField(Imagen, null=True, blank=True)
+    imagen_portada = EmbeddedModelField(Imagen, null=True, blank=True, default=None)
     creador = EmbeddedModelField(Creador)
     clasificacion = EmbeddedModelField(Clasificacion)
     horario = EmbeddedModelField(Horario)
     cupos = EmbeddedModelField(Cupos)
     costo = EmbeddedModelField(Costo, default=Costo)
-    ubicacion = EmbeddedModelField(Ubicacion, null=True, blank=True)
+    ubicacion = EmbeddedModelField(Ubicacion, null=True, blank=True, default=None)
     estado = models.CharField(max_length=12, choices=Estado.choices, default=Estado.BORRADOR)
-    moderacion = EmbeddedModelField(Moderacion, null=True, blank=True)
+    moderacion = EmbeddedModelField(Moderacion, null=True, blank=True, default=None)
     auditoria = EmbeddedModelField(Auditoria, default=Auditoria)
 
     class Meta:
         db_table = "actividades"
         indexes = [
-            EmbeddedFieldIndex(
-                fields=["estado", "horario.inicio"],
-                name="idx_act_estado_inicio",
-            ),
-            EmbeddedFieldIndex(
-                fields=["ubicacion.comuna"],
-                name="idx_act_comuna",
-            ),
-            EmbeddedFieldIndex(
-                fields=["clasificacion.categoria.taxonomia_id"],
-                name="idx_act_categoria",
-            ),
-            EmbeddedFieldIndex(
-                fields=["creador.usuario_id"],
-                name="idx_act_creador",
-            ),
+            EmbeddedFieldIndex(fields=["estado", "horario.inicio"], name="idx_act_estado_inicio"),
+            EmbeddedFieldIndex(fields=["ubicacion.comuna"], name="idx_act_comuna"),
+            EmbeddedFieldIndex(fields=["clasificacion.categoria.taxonomia_id"], name="idx_act_categoria"),
+            EmbeddedFieldIndex(fields=["creador.usuario_id"], name="idx_act_creador"),
         ]
 
     def clean(self):
@@ -509,30 +542,21 @@ class Actividad(models.Model):
 
         super().save(*args, **kwargs)
 
-    def __str__(self):
-        return self.titulo
 
-
-# --- Inscripcion ---
 class Inscripcion(models.Model):
     class Estado(models.TextChoices):
         CONFIRMADA = "confirmada", "Confirmada"
         CANCELADA = "cancelada", "Cancelada"
 
-    actividad = models.ForeignKey(
-        Actividad, on_delete=models.PROTECT, related_name="inscripciones"
-    )
-    usuario = models.ForeignKey(
-        Usuario, on_delete=models.PROTECT, related_name="inscripciones"
-    )
+    actividad = models.ForeignKey(Actividad, on_delete=models.PROTECT, related_name="inscripciones")
+    usuario = models.ForeignKey(Usuario, on_delete=models.PROTECT, related_name="inscripciones")
     actividad_resumen = EmbeddedModelField(ActividadResumen)
     participante_resumen = EmbeddedModelField(ParticipanteResumen)
-    estado = models.CharField(
-        max_length=12, choices=Estado.choices, default=Estado.CONFIRMADA
-    )
+    estado = models.CharField(max_length=12, choices=Estado.choices, default=Estado.CONFIRMADA)
+    requerimientos = EmbeddedModelField(RequerimientosAccesibilidad, null=True, blank=True, default=None)
     fecha_inscripcion = models.DateTimeField(default=timezone.now)
     fecha_cancelacion = models.DateTimeField(null=True, blank=True)
-    auditoria = EmbeddedModelField(AuditoriaInscripcion, null=True, blank=True)
+    auditoria = EmbeddedModelField(AuditoriaInscripcion, null=True, blank=True, default=None)
 
     class Meta:
         db_table = "inscripciones"
@@ -558,11 +582,9 @@ class Inscripcion(models.Model):
 
         if kwargs.get("update_fields") is None:
             self.full_clean()
-
         super().save(*args, **kwargs)
 
 
-# --- Reporte ---
 class Reporte(models.Model):
     class Estado(models.TextChoices):
         PENDIENTE = "pendiente", "Pendiente"
@@ -575,7 +597,7 @@ class Reporte(models.Model):
     motivo = EmbeddedModelArrayField(TaxonomiaRef)
     detalle_usuario = models.TextField(blank=True)
     estado = models.CharField(max_length=12, choices=Estado.choices, default=Estado.PENDIENTE)
-    resolucion_admin = EmbeddedModelField(ResolucionAdmin, null=True, blank=True)
+    resolucion_admin = EmbeddedModelField(ResolucionAdmin, null=True, blank=True, default=None)
     fecha_reporte = models.DateTimeField(default=timezone.now)
     huella = models.CharField(max_length=200, unique=True, editable=False)
 
@@ -583,10 +605,7 @@ class Reporte(models.Model):
         db_table = "reportes"
         indexes = [
             models.Index(fields=["estado", "fecha_reporte"], name="idx_rep_estado_fecha"),
-            EmbeddedFieldIndex(
-                fields=["objetivo.tipo", "objetivo.elemento_id"],
-                name="idx_rep_objetivo",
-            ),
+            EmbeddedFieldIndex(fields=["objetivo.tipo", "objetivo.elemento_id"], name="idx_rep_objetivo"),
         ]
 
     def clean(self):
@@ -595,22 +614,14 @@ class Reporte(models.Model):
             and self.objetivo.tipo == ObjetivoReporte.Tipo.MENSAJE_CHAT
             and not self.objetivo.actividad_id
         ):
-            raise ValidationError(
-                {"objetivo": "Los reportes de mensajes de chat deben incluir actividad_id."}
-            )
+            raise ValidationError({"objetivo": "Los reportes de mensajes de chat deben incluir actividad_id."})
 
         if self.estado in (self.Estado.RESUELTO, self.Estado.DESCARTADO) and not self.resolucion_admin:
-            raise ValidationError(
-                {"resolucion_admin": "Debes registrar la resolución administrativa."}
-            )
+            raise ValidationError({"resolucion_admin": "Debes registrar la resolución administrativa."})
 
     def save(self, *args, **kwargs):
         if not self.huella:
-            self.huella = (
-                f"{self.reportante.usuario_id}:{self.objetivo.tipo}:{self.objetivo.elemento_id}"
-            )
-
+            self.huella = f"{self.reportante.usuario_id}:{self.objetivo.tipo}:{self.objetivo.elemento_id}"
         if kwargs.get("update_fields") is None:
             self.full_clean()
-
         super().save(*args, **kwargs)
