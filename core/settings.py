@@ -45,6 +45,8 @@ INSTALLED_APPS = [
     # Aplicaciónes extras de Django
     'rest_framework',
     'corsheaders',
+    # Swagger
+    'drf_spectacular',
     # Aplicación
     'usuarios',
 ]
@@ -116,6 +118,7 @@ REST_FRAMEWORK = {
         "rest_framework.permissions.IsAuthenticated",
     ],
     "UNAUTHENTICATED_USER": None,
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
     ],
@@ -147,3 +150,14 @@ cloudinary.config(
     api_secret=env("CLOUDINARY_API_SECRET"),
     secure=True
 )
+
+# Configuración visual Swagger
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'API Comunidades de Sabiduría',
+    'DESCRIPTION': 'Documentación interactiva para el Frontend. La autenticación se realiza enviando el token de Firebase Auth en el header (Bearer).',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    # Habilita el botón verde "Authorize" en Swagger para inyectar el token
+    'SECURITY': [{'bearerAuth': []}],
+    'COMPONENT_SPLIT_REQUEST': True,
+}

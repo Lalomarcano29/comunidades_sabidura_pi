@@ -5,7 +5,6 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-
 from .authentication import FirebaseTokenSinPerfil
 from .models import DatosPersona, DatosEntidad, Usuario
 from .serializers import (
@@ -16,6 +15,19 @@ from .serializers import (
 )
 from .services import ArchivoInvalido, subir_imagen
 
+#------------------------------------------------------------------------------------------------------
+from .docs import registro_usuario_schema
+
+@registro_usuario_schema
+class RegistroUsuarioView(APIView):
+    authentication_classes = [FirebaseTokenSinPerfil]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        identidad = request.user
+        if not getattr(identidad, "firebase_uid", None):
+            return Response({"detail": "Identidad de Firebase no disponible."}, status=status.HTTP_401_UNAUTHORIZED)
+#------------------------------------------------------------------------------------------------------
 
 class RegistroUsuarioView(APIView):
     authentication_classes = [FirebaseTokenSinPerfil]
