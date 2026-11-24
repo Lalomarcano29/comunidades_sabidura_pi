@@ -1,17 +1,32 @@
 # React y Vite
 node_modules/
 dist/
+build/
 
-# Variables de entorno
+# Configuración y credenciales locales
 .env
 .env.local
 .env.*.local
+*-firebase-adminsdk-*.json
 
 # Python y Django
-__pycache__/
-*.py[cod]
 .venv/
 venv/
+env/
+__pycache__/
+*.py[cod]
+db.sqlite3
+
+# Archivos multimedia locales
+media/
+!media/.gitkeep
+
+# Logs y pruebas
+*.log
+htmlcov/
+.coverage
+.pytest_cache/
+coverage/
 
 # Archivos del sistema
 .DS_Store
