@@ -11,44 +11,55 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
 from pathlib import Path
+import cloudinary
+import environ
+
+# Claves primarias nativas de MongoDB (ObjectId)
+DEFAULT_AUTO_FIELD = "django_mongodb_backend.fields.ObjectIdAutoField"
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Activación de django-environ
+env = environ.Env(
+    DJANGO_DEBUG=(bool, False),
+    DJANGO_ALLOWED_HOSTS=(list, ["127.0.0.1", "localhost"]),
+    CORS_ALLOWED_ORIGINS=(list, ["http://localhost:5173", "http://127.0.0.1:5173"]),
+)
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
+# Lee el archivo .env si existe en la raíz
+environ.Env.read_env(BASE_DIR / ".env")
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-mtb=r1)q%95(*n6h=&mfl@g9p%=kb%e0vvl3t6=1gd!+kgs%d5'
-
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
-
-ALLOWED_HOSTS = []
-
+# Seguridad básica
+SECRET_KEY = env("DJANGO_SECRET_KEY")
+DEBUG = env("DJANGO_DEBUG")
+ALLOWED_HOSTS = env("DJANGO_ALLOWED_HOSTS")
 
 # Application definition
 
 INSTALLED_APPS = [
-    'django.contrib.admin',
-    'django.contrib.auth',
-    'django.contrib.contenttypes',
-    'django.contrib.sessions',
-    'django.contrib.messages',
+    # Adaptador MongoDB
+    'django_mongodb_backend',
+    'core.apps.MongoContentTypesConfig',
     'django.contrib.staticfiles',
+    # Aplicaciónes extras de Django
     'rest_framework',
     'corsheaders',
+    # Swagger
+    'drf_spectacular',
+    # Aplicación
     'usuarios',
 ]
 
+MIGRATION_MODULES = {
+    "contenttypes": "mongo_migrations.contenttypes",
+}
+
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
-    'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
@@ -61,9 +72,8 @@ TEMPLATES = [
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
+                'django.template.context_processors.debug',
                 'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
             ],
         },
     },
@@ -71,43 +81,18 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'core.wsgi.application'
 
-
-# Database
-# https://docs.djangoproject.com/en/6.1/ref/settings/#databases
-
+# Conexión MongoDB Atlas
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        "ENGINE": "django_mongodb_backend",
+        "HOST": env("MONGODB_URI"),
+        "NAME": env("MONGODB_NAME", default="comunidades_db"),
     }
 }
 
+LANGUAGE_CODE = 'es-cl'
 
-# Password validation
-# https://docs.djangoproject.com/en/6.1/ref/settings/#auth-password-validators
-
-AUTH_PASSWORD_VALIDATORS = [
-    {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
-    },
-]
-
-
-# Internationalization
-# https://docs.djangoproject.com/en/6.1/topics/i18n/
-
-LANGUAGE_CODE = 'en-us'
-
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'America/Santiago'
 
 USE_I18N = True
 
@@ -123,8 +108,56 @@ STATIC_URL = 'static/'
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
 
-MAILERS = {
-    'default': {
-        'BACKEND': 'django.core.mail.backends.console.EmailBackend',
-    },
+EMAIL_BACKEND = env("DJANGO_EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend")
+
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "usuarios.authentication.FirebaseAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+    "UNAUTHENTICATED_USER": None,
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "DEFAULT_RENDERER_CLASSES": [
+        "rest_framework.renderers.JSONRenderer",
+    ],
+}
+
+# Comunicación entre Django y React
+CORS_ALLOWED_ORIGINS = env("CORS_ALLOWED_ORIGINS")
+
+# Conexión backend con Firebase para Auth + Firestore
+FIREBASE_PROJECT_ID = env("FIREBASE_PROJECT_ID", default="")
+_firebase_creds_raw = env("FIREBASE_CREDENTIALS_FILE", default="").strip()
+if _firebase_creds_raw:
+    _firebase_creds_path = Path(_firebase_creds_raw)
+    FIREBASE_CREDENTIALS_FILE = str(
+        _firebase_creds_path
+        if _firebase_creds_path.is_absolute()
+        else (BASE_DIR / _firebase_creds_path)
+    )
+else:
+    FIREBASE_CREDENTIALS_FILE = ""
+
+FIREBASE_AUTH_CLOCK_SKEW_SECONDS = env.int("FIREBASE_AUTH_CLOCK_SKEW_SECONDS", default=10)
+FIREBASE_AUTH_CHECK_REVOKED = env.bool("FIREBASE_AUTH_CHECK_REVOKED", default=False)
+
+# Inicializa Cloudinary
+cloudinary.config(
+    cloud_name=env("CLOUDINARY_CLOUD_NAME"),
+    api_key=env("CLOUDINARY_API_KEY"),
+    api_secret=env("CLOUDINARY_API_SECRET"),
+    secure=True
+)
+
+# Configuración visual Swagger
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'API Comunidades de Sabiduría',
+    'DESCRIPTION': 'Documentación interactiva para el Frontend. La autenticación se realiza enviando el token de Firebase Auth en el header (Bearer).',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    # Habilita el botón verde "Authorize" en Swagger para inyectar el token
+    'SECURITY': [{'bearerAuth': []}],
+    'COMPONENT_SPLIT_REQUEST': True,
 }
