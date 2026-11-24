@@ -1,22 +1,48 @@
 import { useState } from "react";
 import "./App.css";
+import { signInWithEmailAndPassword } from "firebase/auth";
+import { auth } from "./firebase.js";
+import { obtenerMiPerfil } from "./api.js";
 
 function App() {
   const [correo, setCorreo] = useState("");
   const [contrasena, setContrasena] = useState("");
   const [mensaje, setMensaje] = useState("");
+  const [cargando, setCargando] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (!correo.trim() || !contrasena.trim()) {
+    const email = correo.trim();
+    if (!email || !contrasena) {
       setMensaje("Debes completar todos los campos.");
       return;
     }
 
-    setMensaje(
-      "Formulario completado. La conexión con el servidor está pendiente."
-    );
+    setMensaje("Iniciando sesión…");
+
+    setCargando(true);
+    try {
+      const resultado = await signInWithEmailAndPassword(
+        auth,
+        email,
+        contrasena,
+      );
+      setMensaje("Sesión iniciada. Consultando tu perfil…");
+
+      try {
+        await obtenerMiPerfil(resultado.user);
+        setMensaje("Sesión iniciada y perfil recibido desde Django.");
+      } catch (errorPerfil) {
+        console.error("Consulta de perfil:", errorPerfil.message);
+        setMensaje("Firebase confirmó el acceso, pero no pudimos cargar el perfil.");
+      }
+    } catch (error) {
+      console.error("Inicio de sesión:", error.message);
+      setMensaje("No pudimos iniciar sesión. Revisa tus datos e inténtalo nuevamente.");
+    } finally {
+      setCargando(false);
+    }
   };
 
   return (
@@ -43,14 +69,8 @@ function App() {
             <rect width="440" height="112" fill="#deebdd" />
             <circle cx="370" cy="26" r="39" fill="#f1bf74" />
 
-            <path
-              d="M0 90 Q120 55 210 87 T440 64 V112 H0Z"
-              fill="#91b091"
-            />
-            <path
-              d="M0 112 Q105 79 205 107 T440 93 V112Z"
-              fill="#386d53"
-            />
+            <path d="M0 90 Q120 55 210 87 T440 64 V112 H0Z" fill="#91b091" />
+            <path d="M0 112 Q105 79 205 107 T440 93 V112Z" fill="#386d53" />
 
             <g stroke="#205a42" strokeWidth="4" fill="#205a42">
               <path d="M110 104 V43" />
@@ -74,12 +94,12 @@ function App() {
         <h1>Iniciar sesión</h1>
         <p className="login-subtitle">Accede a tu comunidad.</p>
 
-        <form onSubmit={handleSubmit} noValidate>
+        <form onSubmit={handleSubmit}>
           <div className="form-field">
             <label htmlFor="correo">Correo o teléfono</label>
             <input
-              id="correo"
-              type="text"
+              id="Correo Electrónico"
+              type="email"
               placeholder="nombre@correo.cl"
               autoComplete="username"
               value={correo}
@@ -91,6 +111,7 @@ function App() {
             <label htmlFor="contrasena">Contraseña</label>
             <input
               id="contrasena"
+              requied
               type="password"
               placeholder="••••••••"
               autoComplete="current-password"
@@ -105,8 +126,8 @@ function App() {
             </p>
           )}
 
-          <button type="submit" className="btn-primary">
-            Iniciar sesión
+          <button type="submit" className="btn-primary" disabled={cargando}>
+            {cargando ? "Iniciando sesión…" : "Iniciar sesión"}
           </button>
 
           <button
@@ -114,7 +135,7 @@ function App() {
             className="btn-secondary"
             onClick={() =>
               setMensaje(
-                "La pantalla de registro se implementará a continuación."
+                "La pantalla de registro se implementará a continuación.",
               )
             }
           >
