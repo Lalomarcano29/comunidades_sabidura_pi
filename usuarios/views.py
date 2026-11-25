@@ -6,14 +6,44 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-
+from .services import (
+    ActividadNoDisponible,
+    ArchivoInvalido,
+    InscripcionNoEncontrada,
+    SinCupos,
+    YaInscrito,
+    cancelar_inscripcion,
+    inscribir,
+    subir_documento,
+    subir_imagen,
+)
 from .authentication import FirebaseTokenSinPerfil
-from .models import DatosEntidad, DatosPersona, Usuario
+from .permissions import PuedePublicarActividad
+from bson import ObjectId
+from bson.errors import InvalidId
+from django.db.models import Q
+from django.utils import timezone
+from .models import (
+    DatosEntidad,
+    DatosPersona,
+    Taxonomia,
+    TaxonomiaRef,
+    Usuario,
+    Actividad,
+    Clasificacion,
+    Horario,
+    Cupos,
+    Costo,
+    Ubicacion,
+    PuntoGeoJSON,
+    Creador,
+)
 from .serializers import (
     HabilidadesUpdateSerializer,
     PerfilConsultaSerializer,
     PerfilUpdateSerializer,
     RegistroUsuarioSerializer,
+    ActividadSerializer,
 )
 from .services import ArchivoInvalido, subir_imagen
 
@@ -271,3 +301,328 @@ class HabilidadesPerfilView(APIView):
 
         usuario.datos_persona.habilidades = serializer.validated_data["habilidades"]
         return guardar_usuario_o_responder(usuario)
+
+
+def crear_actividad_desde_datos(usuario: Usuario, data: dict) -> Actividad:
+    """Ensambla y guarda una Actividad a partir de datos validados, manejando la lógica de subdocumentos."""
+    clasificacion_data = data['clasificacion']
+    clasificacion = Clasificacion(
+        categoria=TaxonomiaRef(**clasificacion_data['categoria']),
+        nivel_esfuerzo=TaxonomiaRef(**clasificacion_data['nivel_esfuerzo']),
+        accesibilidad=[TaxonomiaRef(**a) for a in clasificacion_data.get('accesibilidad', [])]
+    )
+
+    horario = Horario(**data['horario'])
+    cupos = Cupos(total=data['cupos']['total'], disponible=data['cupos']['total'])
+    costo_data = data.get('costo') or {'monto': 0}
+    costo = Costo(**costo_data)
+
+    ubicacion = None
+    if data.get('ubicacion'):
+        u_data = data['ubicacion']
+        punto = PuntoGeoJSON(coordinates=u_data['geo_exacta']['coordinates'])
+        ubicacion = Ubicacion(
+            comuna=u_data['comuna'],
+            direccion_privada=u_data['direccion_privada'],
+            geo_exacta=punto
+        )
+
+    creador = Creador(
+        usuario_id=usuario.pk,
+        nombre_mostrar=usuario.nombre_mostrar,
+        tipo_cuenta=usuario.tipo_cuenta
+    )
+
+    actividad = Actividad(
+        titulo=data['titulo'],
+        descripcion=data['descripcion'],
+        modalidad=data['modalidad'],
+        clasificacion=clasificacion,
+        horario=horario,
+        cupos=cupos,
+        costo=costo,
+        ubicacion=ubicacion,
+        creador=creador,
+        estado=Actividad.Estado.PUBLICADA
+    )
+    
+    actividad.save()
+    return actividad
+
+
+class ActividadListCreateView(APIView):
+
+    def get_permissions(self):
+        """Todos los autenticados pueden ver (GET), solo publicadores pueden crear (POST)."""
+        if self.request.method == 'POST':
+            return [IsAuthenticated(), PuedePublicarActividad()]
+        return [IsAuthenticated()]
+
+    @extend_schema(
+        summary="Listar catálogo de actividades",
+        description="Obtiene todas las actividades publicadas. Disponible para cualquier usuario autenticado.",
+        responses=respuestas_http({
+            200: ActividadSerializer(many=True)
+        })
+    )
+    def get(self, request):
+        # El catálogo solo debe mostrar las que están PUBLICADAS
+        actividades = Actividad.objects.filter(
+            estado=Actividad.Estado.PUBLICADA,
+            horario__inicio__gt=timezone.now(),
+        ).order_by("horario__inicio")
+        serializer = ActividadSerializer(actividades, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        summary="Publicar nueva actividad",
+        description="Publica una actividad. Solo disponible para personas (>=18) u organizaciones verificadas.",
+        request=ActividadSerializer,
+        responses=respuestas_http({
+            201: ActividadSerializer,
+            400: OpenApiResponse(description="400 Bad Request: Errores de validación."),
+            403: OpenApiResponse(description="403 Forbidden: El usuario no es publicador."),
+        })
+    )
+    def post(self, request):
+        serializer = ActividadSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            actividad = crear_actividad_desde_datos(request.user, serializer.validated_data)
+        except DjangoValidationError as exc:
+            detalle = exc.message_dict if hasattr(exc, "message_dict") else {"detail": exc.messages}
+            return Response(detalle, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(ActividadSerializer(actividad).data, status=status.HTTP_201_CREATED)
+
+
+class ActividadFotoView(APIView):
+    permission_classes = [IsAuthenticated, PuedePublicarActividad]
+    parser_classes = [MultiPartParser, FormParser]
+
+    @extend_schema(
+        summary="Subir portada de actividad",
+        description="Adjunta una imagen a una actividad. Debes ser el creador de la misma.",
+        request=inline_serializer(
+            name="PortadaUploadRequest",
+            fields={"foto": serializers.ImageField(required=True, help_text="Archivo de imagen (jpg, png, webp)")}
+        ),
+        responses=respuestas_http({
+            200: ActividadSerializer,  # <-- Ahora devolverá la Actividad, no el Perfil
+            400: OpenApiResponse(description="400 Bad Request: Archivo faltante o rechazado."),
+            404: OpenApiResponse(description="404 Not Found: Actividad no encontrada o no te pertenece."),
+            415: OpenApiResponse(description="415 Unsupported Media Type."),
+        })
+    )
+    def post(self, request, actividad_id):
+        try:
+            # Aseguramos que la actividad existe y le pertenece al usuario
+            actividad = Actividad.objects.get(pk=actividad_id, creador__usuario_id=request.user.pk)
+        except Actividad.DoesNotExist:
+            return Response({"detail": "Actividad no encontrada o no tienes permiso."}, status=status.HTTP_404_NOT_FOUND)
+
+        archivo = request.FILES.get("foto") or request.FILES.get("imagen_portada")
+        if not archivo:
+            return Response({"foto": ["Debes adjuntar un archivo."]}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            imagen_embebida = subir_imagen(archivo, carpeta="actividades")
+        except ArchivoInvalido as exc:
+            return Response({"foto": [str(exc)]}, status=status.HTTP_400_BAD_REQUEST)
+
+        actividad.imagen_portada = imagen_embebida
+        actividad.save()
+        return Response(ActividadSerializer(actividad).data, status=status.HTTP_200_OK)
+
+
+class DocumentosEntidadView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    @extend_schema(
+        summary="Subir documentos de empresa/institución",
+        description="Sube archivos PDF o imágenes para verificar la organización (eRUT, representación y carnet).",
+        request=inline_serializer(
+            name="DocumentosUploadRequest",
+            fields={
+                "erut": serializers.FileField(required=False),
+                "documento_representacion": serializers.FileField(required=False),
+                "cedula_anverso": serializers.FileField(required=False),
+                "cedula_reverso": serializers.FileField(required=False)
+            }
+        ),
+        responses=respuestas_http({
+            200: PerfilConsultaSerializer,
+            400: OpenApiResponse(description="400 Bad Request: Archivo inválido o perfil no es organización."),
+        })
+    )
+    def post(self, request):
+        usuario = request.user
+        if usuario.tipo_cuenta not in (Usuario.TipoCuenta.EMPRESA, Usuario.TipoCuenta.INSTITUCION):
+            return Response({"detail": "Este endpoint es exclusivo para empresas o instituciones."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not usuario.datos_entidad:
+            return Response({"detail": "La organización no tiene los datos base configurados."}, status=status.HTTP_400_BAD_REQUEST)
+
+        archivos = 0
+        errores = {}
+
+        # Mapeo de campos esperados en el request hacia el modelo DatosEntidad
+        campos_documentos = [
+            "erut", 
+            "documento_representacion", 
+            "cedula_anverso", 
+            "cedula_reverso"
+        ]
+
+        for campo in campos_documentos:
+            if campo in request.FILES:
+                try:
+                    # Se usa la función subir_documento (type='authenticated') por seguridad
+                    doc = subir_documento(request.FILES[campo], carpeta="verificaciones")
+                    setattr(usuario.datos_entidad, campo, doc)
+                    archivos += 1
+                except ArchivoInvalido as exc:
+                    errores[campo] = str(exc)
+
+        if errores:
+            return Response(errores, status=status.HTTP_400_BAD_REQUEST)
+
+        if archivos == 0:
+            return Response({"detail": "No se enviaron documentos válidos para actualizar."}, status=status.HTTP_400_BAD_REQUEST)
+
+        return guardar_usuario_o_responder(usuario)
+
+
+class ActividadDetalleView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Obtener detalle de actividad por ID",
+        description=(
+            "Retorna descripción íntegra, categoría, fecha/horario, duración en minutos, "
+            "cupos (total y disponibles), costo y datos del creador."
+        ),
+        responses=respuestas_http({
+            200: ActividadSerializer,
+            404: OpenApiResponse(description="404 Not Found: Actividad no encontrada."),
+        }),
+    )
+    def get(self, request, actividad_id):
+        try:
+            oid = ObjectId(str(actividad_id))
+        except (InvalidId, TypeError):
+            return Response({"detail": "Actividad no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+
+        actividad = Actividad.objects.filter(
+            Q(pk=oid)
+            & (
+                Q(estado=Actividad.Estado.PUBLICADA)
+                | Q(creador__usuario_id=request.user.pk)
+            )
+        ).first()
+
+        if not actividad:
+            return Response({"detail": "Actividad no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response(ActividadSerializer(actividad).data, status=status.HTTP_200_OK)
+
+
+def _obtener_ip_cliente(request) -> str | None:
+    x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+    if x_forwarded_for:
+        return x_forwarded_for.split(",")[0].strip()
+    return request.META.get("REMOTE_ADDR")
+
+
+class ActividadInscripcionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Inscribirse a una actividad",
+        description=(
+            "Registra o reactiva la inscripción del usuario autenticado en una actividad publicada "
+            "descontando atómicamente 1 cupo en MongoDB Atlas."
+        ),
+        responses=respuestas_http({
+            201: OpenApiResponse(description="201 Created: Inscripción confirmada y cupo descontado."),
+            400: OpenApiResponse(description="400 Bad Request: ID inválido o actividad no disponible."),
+            404: OpenApiResponse(description="404 Not Found: Actividad no encontrada."),
+            409: OpenApiResponse(description="409 Conflict: Sin cupos disponibles o usuario ya inscrito."),
+        }),
+    )
+    def post(self, request, actividad_id):
+        try:
+            oid = ObjectId(str(actividad_id))
+        except (InvalidId, TypeError):
+            return Response({"detail": "ID de actividad inválido."}, status=status.HTTP_400_BAD_REQUEST)
+
+        dispositivo = request.META.get("HTTP_USER_AGENT", "")
+        ip_origen = _obtener_ip_cliente(request)
+
+        try:
+            inscripcion = inscribir(
+                usuario=request.user,
+                actividad_id=oid,
+                ip_origen=ip_origen,
+                dispositivo=dispositivo,
+            )
+        except SinCupos as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except YaInscrito as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except ActividadNoDisponible as exc:
+            mensaje = str(exc)
+            codigo = status.HTTP_404_NOT_FOUND if "no existe" in mensaje.lower() else status.HTTP_400_BAD_REQUEST
+            return Response({"detail": mensaje}, status=codigo)
+
+        return Response(
+            {
+                "id": str(inscripcion.pk),
+                "actividad_id": str(inscripcion.actividad_id),
+                "estado": inscripcion.estado,
+                "fecha_inscripcion": inscripcion.fecha_inscripcion,
+                "actividad_resumen": {
+                    "titulo": inscripcion.actividad_resumen.titulo,
+                    "fecha_inicio": inscripcion.actividad_resumen.fecha_inicio,
+                    "comuna": inscripcion.actividad_resumen.comuna,
+                },
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    @extend_schema(
+        summary="Cancelar inscripción en una actividad",
+        description=(
+            "Cancela la inscripción confirmada del usuario autenticado y devuelve atómicamente "
+            "1 cupo disponible en MongoDB Atlas."
+        ),
+        responses=respuestas_http({
+            200: OpenApiResponse(description="200 OK: Inscripción cancelada y cupo devuelto."),
+            400: OpenApiResponse(description="400 Bad Request: ID inválido o actividad ya iniciada."),
+            404: OpenApiResponse(description="404 Not Found: Inscripción activa no encontrada."),
+        }),
+    )
+    def delete(self, request, actividad_id):
+        try:
+            oid = ObjectId(str(actividad_id))
+        except (InvalidId, TypeError):
+            return Response({"detail": "ID de actividad inválido."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            inscripcion = cancelar_inscripcion(usuario=request.user, actividad_id=oid)
+        except InscripcionNoEncontrada as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except ActividadNoDisponible as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {
+                "id": str(inscripcion.pk),
+                "actividad_id": str(inscripcion.actividad_id),
+                "estado": inscripcion.estado,
+                "fecha_cancelacion": inscripcion.fecha_cancelacion,
+            },
+            status=status.HTTP_200_OK,
+        )

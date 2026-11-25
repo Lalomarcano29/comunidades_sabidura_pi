@@ -1,6 +1,11 @@
 from django.urls import path
-from .views import (
+from usuarios.views import (
+    ActividadDetalleView,
+    ActividadFotoView,
+    ActividadInscripcionView,
+    ActividadListCreateView,
     CerrarSesionView,
+    DocumentosEntidadView,
     HabilidadesPerfilView,
     PerfilDetalleView,
     PerfilFotoView,
@@ -21,4 +26,9 @@ urlpatterns = [
     path("perfil/", PerfilDetalleView.as_view(), name="perfil-detalle"),
     path("perfil/foto/", PerfilFotoView.as_view(), name="perfil-foto"),
     path("perfil/habilidades/", HabilidadesPerfilView.as_view(), name="perfil-habilidades"),
+    path("actividades/", ActividadListCreateView.as_view(), name="actividades-list-create"),
+    path("actividades/<str:actividad_id>/", ActividadDetalleView.as_view(), name="actividades-detalle"),
+    path("actividades/<str:actividad_id>/portada/", ActividadFotoView.as_view(), name="actividades-portada"),
+    path("actividades/<str:actividad_id>/inscribir/", ActividadInscripcionView.as_view(), name="actividades-inscribir"),
+    path("perfil/documentos/", DocumentosEntidadView.as_view(), name="perfil-documentos"),
 ]

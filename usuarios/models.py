@@ -85,9 +85,10 @@ class DatosPersona(EmbeddedModel):
 class DatosEntidad(EmbeddedModel):
     razon_social = models.CharField(max_length=200, validators=[validar_nombre_mostrar])
     fecha_creacion = models.DateField()
-    certificado_vigencia = EmbeddedModelField(DocumentoPrivado, null=True, blank=True, default=None)
+    erut = EmbeddedModelField(DocumentoPrivado, null=True, blank=True, default=None)
     documento_representacion = EmbeddedModelField(DocumentoPrivado, null=True, blank=True, default=None)
-    otros_antecedentes = EmbeddedModelField(DocumentoPrivado, null=True, blank=True, default=None)
+    cedula_anverso = EmbeddedModelField(DocumentoPrivado, null=True, blank=True, default=None)
+    cedula_reverso = EmbeddedModelField(DocumentoPrivado, null=True, blank=True, default=None)
 
     def full_clean(self, exclude=None, validate_unique=True, validate_constraints=True):
         try:
@@ -99,7 +100,8 @@ class DatosEntidad(EmbeddedModel):
         except ValidationError as exc:
             if not hasattr(exc, "error_dict"):
                 raise
-            opcionales = ("certificado_vigencia", "documento_representacion", "otros_antecedentes")
+            # Se permite que la cuenta se cree sin documentos inicialmente
+            opcionales = ("erut", "documento_representacion", "cedula_anverso", "cedula_reverso")
             errores_reales = {
                 campo: msgs
                 for campo, msgs in exc.error_dict.items()

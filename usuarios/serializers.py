@@ -1,6 +1,11 @@
 from bson import ObjectId
 from rest_framework import serializers
-from .models import DatosPersona, DatosEntidad, Imagen, Taxonomia, TaxonomiaRef, Usuario
+from .models import (
+    Taxonomia,
+    TaxonomiaRef,
+    Usuario,
+    Actividad,
+)
 
 class ImagenSerializer(serializers.Serializer):
     public_id = serializers.CharField(read_only=True)
@@ -110,3 +115,104 @@ class HabilidadesUpdateSerializer(serializers.Serializer):
                 )
             resueltas.append(TaxonomiaRef(taxonomia_id=tax_id, nombre=nombre))
         return resueltas
+
+class ClasificacionSerializer(serializers.Serializer):
+    categoria = TaxonomiaRefSerializer()
+    nivel_esfuerzo = TaxonomiaRefSerializer()
+    accesibilidad = TaxonomiaRefSerializer(many=True, required=False, default=list)
+
+    def _validar_taxonomia(self, tax_data, tipo_esperado):
+        tax_id = tax_data["taxonomia_id"]
+        tax = Taxonomia.objects.filter(pk=tax_id, tipo=tipo_esperado, activa=True).first()
+        if not tax:
+            raise serializers.ValidationError(f"La taxonomía '{tax_id}' no existe o no es de tipo '{tipo_esperado}'.")
+        # Forzamos el nombre real de la BD para asegurar consistencia
+        tax_data["nombre"] = tax.nombre
+        return tax_data
+
+    def validate(self, attrs):
+        if "categoria" in attrs:
+            attrs["categoria"] = self._validar_taxonomia(attrs["categoria"], Taxonomia.Tipo.CATEGORIA)
+        if "nivel_esfuerzo" in attrs:
+            attrs["nivel_esfuerzo"] = self._validar_taxonomia(attrs["nivel_esfuerzo"], Taxonomia.Tipo.NIVEL_ESFUERZO)
+        
+        if "accesibilidad" in attrs:
+            resueltas = []
+            for item in attrs["accesibilidad"]:
+                resueltas.append(self._validar_taxonomia(item, Taxonomia.Tipo.ACCESIBILIDAD))
+            attrs["accesibilidad"] = resueltas
+            
+        return attrs
+
+class HorarioSerializer(serializers.Serializer):
+    inicio = serializers.DateTimeField()
+    fin = serializers.DateTimeField()
+    duracion_minutos = serializers.IntegerField(read_only=True)
+
+class CuposSerializer(serializers.Serializer):
+    total = serializers.IntegerField(min_value=1)
+    disponible = serializers.IntegerField(read_only=True)
+    sin_cupos = serializers.SerializerMethodField()
+
+    def get_sin_cupos(self, obj) -> bool:
+        disponible = getattr(obj, "disponible", None)
+        if disponible is None and isinstance(obj, dict):
+            disponible = obj.get("disponible")
+        return (disponible or 0) <= 0
+
+class CostoSerializer(serializers.Serializer):
+    monto = serializers.IntegerField(min_value=0, default=0, help_text="0 significa gratuita")
+    es_gratuito = serializers.SerializerMethodField()
+
+    def get_es_gratuito(self, obj) -> bool:
+        monto = getattr(obj, "monto", None)
+        if monto is None and isinstance(obj, dict):
+            monto = obj.get("monto", 0)
+        return (monto or 0) == 0
+
+class PuntoGeoJSONSerializer(serializers.Serializer):
+    coordinates = serializers.ListField(
+        child=serializers.FloatField(), min_length=2, max_length=2,
+        help_text="[longitud, latitud]"
+    )
+
+class UbicacionSerializer(serializers.Serializer):
+    comuna = serializers.CharField(max_length=100)
+    direccion_privada = serializers.CharField(max_length=255)
+    geo_exacta = PuntoGeoJSONSerializer()
+
+class CreadorSerializer(serializers.Serializer):
+    usuario_id = serializers.CharField(read_only=True)
+    nombre_mostrar = serializers.CharField(read_only=True)
+    tipo_cuenta = serializers.CharField(read_only=True)
+
+class ActividadSerializer(serializers.Serializer):
+    id = serializers.CharField(read_only=True, source="pk")
+    titulo = serializers.CharField(max_length=150)
+    descripcion = serializers.CharField()
+    modalidad = serializers.ChoiceField(choices=Actividad.Modalidad.choices)
+    imagen_portada = ImagenSerializer(read_only=True)
+    clasificacion = ClasificacionSerializer()
+    horario = HorarioSerializer()
+    cupos = CuposSerializer()
+    costo = CostoSerializer(required=False)
+    ubicacion = UbicacionSerializer(required=False, allow_null=True)
+    creador = CreadorSerializer(read_only=True)
+    estado = serializers.ChoiceField(choices=Actividad.Estado.choices, read_only=True)
+
+    def validate(self, attrs):
+        horario = attrs.get('horario')
+        if horario and horario['inicio'] and horario['fin']:
+            if horario['fin'] <= horario['inicio']:
+                raise serializers.ValidationError({"horario": "La fecha/hora de término debe ser posterior al inicio."})
+
+        modalidad = attrs.get('modalidad')
+        if modalidad in (Actividad.Modalidad.PRESENCIAL, Actividad.Modalidad.MIXTA):
+            if not attrs.get('ubicacion'):
+                raise serializers.ValidationError({"ubicacion": "La ubicación es obligatoria para actividades presenciales o mixtas."})
+            
+            coords = attrs['ubicacion']['geo_exacta']['coordinates']
+            if not (-180 <= coords[0] <= 180 and -90 <= coords[1] <= 90):
+                raise serializers.ValidationError({"ubicacion": "Coordenadas geográficas fuera de rango."})
+                
+        return attrs
