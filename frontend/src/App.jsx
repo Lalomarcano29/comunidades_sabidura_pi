@@ -3,12 +3,14 @@ import "./App.css";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from "./firebase.js";
 import { obtenerMiPerfil } from "./api.js";
+import Registro from "./Registro.jsx";
 
 function App() {
   const [correo, setCorreo] = useState("");
   const [contrasena, setContrasena] = useState("");
   const [mensaje, setMensaje] = useState("");
   const [cargando, setCargando] = useState(false);
+  const [mostrarRegistro, setMostrarRegistro] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -48,6 +50,9 @@ function App() {
       setCargando(false);
     }
   };
+      if (mostrarRegistro) {
+    return <Registro onVolver={() => setMostrarRegistro(false)} />;
+  }
 
   return (
     <main className="login-page">
@@ -138,11 +143,7 @@ function App() {
           <button
             type="button"
             className="btn-secondary"
-            onClick={() =>
-              setMensaje(
-                "La pantalla de registro se implementará a continuación.",
-              )
-            }
+            onClick={() => setMostrarRegistro(true)}
           >
             Crear una cuenta
           </button>
