@@ -31,15 +31,19 @@ function App() {
       setMensaje("Sesión iniciada. Consultando tu perfil…");
 
       try {
-        await obtenerMiPerfil(resultado.user);
-        setMensaje("Sesión iniciada y perfil recibido desde Django.");
+      const perfil = await obtenerMiPerfil(resultado.user);
+      setMensaje(`¡Hola, ${perfil.nombre_mostrar}! Tu perfil se cargó correctamente.`);
       } catch (errorPerfil) {
         console.error("Consulta de perfil:", errorPerfil.message);
-        setMensaje("Firebase confirmó el acceso, pero no pudimos cargar el perfil.");
+        setMensaje(
+          "Firebase confirmó el acceso, pero no pudimos cargar el perfil.",
+        );
       }
     } catch (error) {
       console.error("Inicio de sesión:", error.message);
-      setMensaje("No pudimos iniciar sesión. Revisa tus datos e inténtalo nuevamente.");
+      setMensaje(
+        "No pudimos iniciar sesión. Revisa tus datos e inténtalo nuevamente.",
+      );
     } finally {
       setCargando(false);
     }
@@ -50,7 +54,7 @@ function App() {
       <div className="login-container">
         <header className="app-header">
           <div className="app-logo" aria-hidden="true">
-            <span>♣</span>
+            <span>👥</span>
           </div>
 
           <div className="app-brand">
@@ -96,10 +100,11 @@ function App() {
 
         <form onSubmit={handleSubmit}>
           <div className="form-field">
-            <label htmlFor="correo">Correo o teléfono</label>
+            <label htmlFor="correo">Correo electrónico</label>
             <input
-              id="Correo Electrónico"
+              id="correo"
               type="email"
+              required
               placeholder="nombre@correo.cl"
               autoComplete="username"
               value={correo}
@@ -111,7 +116,7 @@ function App() {
             <label htmlFor="contrasena">Contraseña</label>
             <input
               id="contrasena"
-              requied
+              required
               type="password"
               placeholder="••••••••"
               autoComplete="current-password"
@@ -141,6 +146,7 @@ function App() {
           >
             Crear una cuenta
           </button>
+
         </form>
       </div>
     </main>
