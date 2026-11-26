@@ -1,31 +1,33 @@
-﻿# Entornos virtuales de Python
+# React y Vite
+node_modules/
+dist/
+build/
+
+# Configuración y credenciales locales
+.env
+.env.local
+.env.*.local
+*-firebase-adminsdk-*.json
+
+# Python y Django
+.venv/
 venv/
 env/
 __pycache__/
-*.pyc
+*.py[cod]
 db.sqlite3
-
-# Dependencias de Node/React
-node_modules/
-.env
-dist/
-build/
 
 # Archivos multimedia locales
 media/
 !media/.gitkeep
 
-# Logs y Pruebas
+# Logs y pruebas
 *.log
 htmlcov/
 .coverage
 .pytest_cache/
 coverage/
 
-#Archivos de Sistema Operativo
+# Archivos del sistema
 .DS_Store
 Thumbs.db
-
-#Archivo firebase
-
-comunidades-sabiduria-firebase-adminsdk-fbsvc-9cf00656da.json
