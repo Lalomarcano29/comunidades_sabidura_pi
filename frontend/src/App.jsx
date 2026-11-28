@@ -4,6 +4,7 @@ import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from "./firebase.js";
 import { obtenerMiPerfil } from "./api.js";
 import Registro from "./Registro.jsx";
+import Perfil from "./Perfil.jsx";
 
 function App() {
   const [correo, setCorreo] = useState("");
@@ -11,6 +12,7 @@ function App() {
   const [mensaje, setMensaje] = useState("");
   const [cargando, setCargando] = useState(false);
   const [mostrarRegistro, setMostrarRegistro] = useState(false);
+  const [perfil, setPerfil] = useState(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -33,8 +35,8 @@ function App() {
       setMensaje("Sesión iniciada. Consultando tu perfil…");
 
       try {
-      const perfil = await obtenerMiPerfil(resultado.user);
-      setMensaje(`¡Hola, ${perfil.nombre_mostrar}! Tu perfil se cargó correctamente.`);
+        const perfilRecibido = await obtenerMiPerfil(resultado.user);
+        setPerfil(perfilRecibido);
       } catch (errorPerfil) {
         console.error("Consulta de perfil:", errorPerfil.message);
         setMensaje(
@@ -50,7 +52,10 @@ function App() {
       setCargando(false);
     }
   };
-      if (mostrarRegistro) {
+  if (perfil) {
+    return <Perfil perfil={perfil} />;
+  }
+  if (mostrarRegistro) {
     return <Registro onVolver={() => setMostrarRegistro(false)} />;
   }
 
@@ -147,7 +152,6 @@ function App() {
           >
             Crear una cuenta
           </button>
-
         </form>
       </div>
     </main>
